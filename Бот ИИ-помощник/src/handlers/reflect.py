@@ -19,18 +19,7 @@ router = Router()
 @router.message(F.text.in_({"🧩 Цифровое Я", "/reflect"}))
 async def reflect_start(msg: Message, state: FSMContext):
     """Начало диалога с цифровым Я."""
-    # Проверяем доступ (Mentor+)
-    user = await db.get_user(msg.from_user.id)
-    if not user or (user.plan_tier == "free" and not user.trial_until):
-        await msg.answer(
-            ux.compose(
-                ux.h1("Цифровое Я", "🧩"),
-                ux.p("Эта функция доступна в тарифе Mentor+"),
-                ux.block("Обнови подписку", ["Получи доступ к диалогу", "Углубленные рефлексии", "Расширенная память"], "🔮")
-            ),
-            reply_markup=get_main_menu()
-        )
-        return
+    # Убираем проверку доступа - функция доступна всем
     
     await state.set_state(Reflect.topic)
     await msg.answer(
@@ -92,10 +81,10 @@ async def process_reflect_prompt(msg: Message, state: FSMContext):
     # Генерируем ответ через GPT
     response = await gpt_service.reflect_dialog(
         user_prompt=question,
-        profile=user.profile_data,
-        persona=user.persona,
+        profile=user.profile_data or {},
+        persona=user.persona or "Дружелюбный помощник",
         memories=memories,
-        mood_snapshot=None  # Можно добавить текущее настроение
+        mood_snapshot={"energy": 5, "mood": 5}  # Значения по умолчанию
     )
     
     # Показываем ответ

@@ -39,13 +39,22 @@ class GPTService:
                     return "Извините, временно не могу обработать запрос. Попробуйте позже."
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
     
-    async def build_profile(self, answers_10q: Dict[str, str]) -> Dict[str, Any]:
+    async def build_profile(self, answers_10q: List[str]) -> Dict[str, Any]:
         """Строит психологический профиль на основе 10 вопросов."""
         prompt = f"""
         Ты - опытный психолог и коуч. Проанализируй ответы пользователя на 10 вопросов и создай детальный психологический профиль.
         
         Ответы пользователя:
-        {answers_10q}
+        Вопрос 1: {answers_10q[0] if len(answers_10q) > 0 else 'Не отвечен'}
+        Вопрос 2: {answers_10q[1] if len(answers_10q) > 1 else 'Не отвечен'}
+        Вопрос 3: {answers_10q[2] if len(answers_10q) > 2 else 'Не отвечен'}
+        Вопрос 4: {answers_10q[3] if len(answers_10q) > 3 else 'Не отвечен'}
+        Вопрос 5: {answers_10q[4] if len(answers_10q) > 4 else 'Не отвечен'}
+        Вопрос 6: {answers_10q[5] if len(answers_10q) > 5 else 'Не отвечен'}
+        Вопрос 7: {answers_10q[6] if len(answers_10q) > 6 else 'Не отвечен'}
+        Вопрос 8: {answers_10q[7] if len(answers_10q) > 7 else 'Не отвечен'}
+        Вопрос 9: {answers_10q[8] if len(answers_10q) > 8 else 'Не отвечен'}
+        Вопрос 10: {answers_10q[9] if len(answers_10q) > 9 else 'Не отвечен'}
         
         Создай глубокий анализ личности, который будет:
         1. Детальным и конкретным (не общими фразами)
