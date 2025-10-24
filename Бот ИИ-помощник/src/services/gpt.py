@@ -41,53 +41,63 @@ class GPTService:
     
     async def build_profile(self, answers_10q: List[str]) -> Dict[str, Any]:
         """Строит психологический профиль на основе 10 вопросов."""
-        prompt = f"""
-        Ты - опытный психолог и коуч. Проанализируй ответы пользователя на 10 вопросов и создай детальный психологический профиль.
-        
-        Ответы пользователя:
-        Вопрос 1: {answers_10q[0] if len(answers_10q) > 0 else 'Не отвечен'}
-        Вопрос 2: {answers_10q[1] if len(answers_10q) > 1 else 'Не отвечен'}
-        Вопрос 3: {answers_10q[2] if len(answers_10q) > 2 else 'Не отвечен'}
-        Вопрос 4: {answers_10q[3] if len(answers_10q) > 3 else 'Не отвечен'}
-        Вопрос 5: {answers_10q[4] if len(answers_10q) > 4 else 'Не отвечен'}
-        Вопрос 6: {answers_10q[5] if len(answers_10q) > 5 else 'Не отвечен'}
-        Вопрос 7: {answers_10q[6] if len(answers_10q) > 6 else 'Не отвечен'}
-        Вопрос 8: {answers_10q[7] if len(answers_10q) > 7 else 'Не отвечен'}
-        Вопрос 9: {answers_10q[8] if len(answers_10q) > 8 else 'Не отвечен'}
-        Вопрос 10: {answers_10q[9] if len(answers_10q) > 9 else 'Не отвечен'}
-        
-        Создай глубокий анализ личности, который будет:
-        1. Детальным и конкретным (не общими фразами)
-        2. Основанным на реальных ответах пользователя
-        3. Практичным и полезным
-        4. Красиво оформленным
-        
-        Верни JSON с полями:
-        - personality_type: тип личности (конкретно, например "Амбициозный аналитик" или "Творческий интроверт")
-        - detailed_analysis: развернутый анализ личности (2-3 абзаца, красиво написанный)
-        - strengths: сильные стороны (4-6 конкретных пунктов)
-        - growth_areas: области для развития (3-4 конкретных пункта)
-        - communication_style: стиль общения (детально)
-        - motivation_factors: факторы мотивации (конкретно)
-        - personal_advice: персональный совет на основе анализа (1-2 абзаца, практичный)
-        """
+        prompt = f"""Ты - опытный психолог. Проанализируй ответы пользователя и создай психологический профиль.
+
+Ответы пользователя:
+1. {answers_10q[0] if len(answers_10q) > 0 else 'Не отвечен'}
+2. {answers_10q[1] if len(answers_10q) > 1 else 'Не отвечен'}
+3. {answers_10q[2] if len(answers_10q) > 2 else 'Не отвечен'}
+4. {answers_10q[3] if len(answers_10q) > 3 else 'Не отвечен'}
+5. {answers_10q[4] if len(answers_10q) > 4 else 'Не отвечен'}
+6. {answers_10q[5] if len(answers_10q) > 5 else 'Не отвечен'}
+7. {answers_10q[6] if len(answers_10q) > 6 else 'Не отвечен'}
+8. {answers_10q[7] if len(answers_10q) > 7 else 'Не отвечен'}
+9. {answers_10q[8] if len(answers_10q) > 8 else 'Не отвечен'}
+10. {answers_10q[9] if len(answers_10q) > 9 else 'Не отвечен'}
+
+Верни ТОЛЬКО JSON без дополнительного текста:
+{{
+  "personality_type": "тип личности",
+  "detailed_analysis": "детальный анализ",
+  "strengths": ["сила1", "сила2", "сила3"],
+  "growth_areas": ["область1", "область2"],
+  "communication_style": "стиль общения",
+  "motivation_factors": ["фактор1", "фактор2"],
+  "personal_advice": "персональный совет"
+}}"""
         
         messages = [{"role": "user", "content": prompt}]
         response = await self._make_request(messages)
         
         try:
             import json
-            return json.loads(response)
-        except json.JSONDecodeError:
-            logger.error("Failed to parse profile JSON")
+            import re
+            
+            # Очищаем ответ от лишних символов
+            cleaned_response = response.strip()
+            
+            # Ищем JSON в тексте
+            json_match = re.search(r'\{.*\}', cleaned_response, re.DOTALL)
+            if json_match:
+                json_str = json_match.group(0)
+                return json.loads(json_str)
+            else:
+                # Если JSON не найден, пытаемся парсить весь ответ
+                return json.loads(cleaned_response)
+                
+        except (json.JSONDecodeError, AttributeError) as e:
+            logger.error(f"Failed to parse profile JSON: {e}")
+            logger.error(f"Response was: {response[:200]}...")
+            
+            # Возвращаем профиль на основе ответов пользователя
             return {
-                "personality_type": "Аналитик",
-                "detailed_analysis": "Вы демонстрируете аналитический подход к решению задач. Ваши ответы показывают системное мышление и стремление к структурированности. Это позволяет вам эффективно планировать и достигать поставленных целей.",
-                "strengths": ["Целеустремленность", "Аналитическое мышление", "Системный подход", "Планирование"],
-                "growth_areas": ["Эмоциональная гибкость", "Коммуникация", "Спонтанность"],
-                "communication_style": "Прямой и конструктивный",
-                "motivation_factors": ["Достижение целей", "Личностный рост", "Признание"],
-                "personal_advice": "Используйте свой аналитический ум для планирования, но не забывайте о важности эмоционального интеллекта. Развивайте навыки общения и учитесь быть более гибким в неожиданных ситуациях."
+                "personality_type": "Адаптивная личность",
+                "detailed_analysis": f"На основе ваших ответов: {', '.join(answers_10q[:3])} - вы демонстрируете уникальный подход к жизни. Ваши ответы показывают индивидуальность и способность к рефлексии.",
+                "strengths": ["Самоанализ", "Целеустремленность", "Адаптивность", "Рефлексия"],
+                "growth_areas": ["Эмоциональная гибкость", "Коммуникация", "Самопринятие"],
+                "communication_style": "Искренний и открытый",
+                "motivation_factors": ["Личностный рост", "Самореализация", "Развитие"],
+                "personal_advice": "Продолжайте развивать самосознание и используйте свои сильные стороны для достижения целей. Не забывайте о важности баланса между амбициями и внутренним покоем."
             }
         except Exception as e:
             logger.error(f"Profile building failed: {e}")
