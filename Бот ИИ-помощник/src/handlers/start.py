@@ -29,7 +29,7 @@ async def cmd_start(message: Message, state: FSMContext):
             tg_id=user_id,
             created_at=datetime.now(),
             plan_tier="free",
-            trial_until=datetime.now() + timedelta(days=3)  # 3-дневный trial
+            trial_until=datetime.now() + timedelta(days=5)  # 5-дневный trial
         )
         await db.upsert_user(new_user)
         logger.info(f"New user created: {user_id}")

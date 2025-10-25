@@ -13,6 +13,7 @@ from src.storage import db
 from src.scheduler import scheduler_service
 from src.middlewares.subscription_gate import SubscriptionGateMiddleware
 from src.payments.tribute import tribute_service
+from src.services.gpt import gpt_service
 
 # Импорты обработчиков
 from src.handlers import start, menu, morning, evening, focus, habits, mood, reflect, weekly, settings, billing, common, profile, abstinence
@@ -21,6 +22,17 @@ logger = get_logger("main")
 
 # Глобальная переменная для бота
 bot = None
+
+
+async def periodic_alive_log():
+    """Периодически логирует 'alive' для мониторинга."""
+    while True:
+        try:
+            await asyncio.sleep(300)  # Каждые 5 минут
+            logger.info("Bot alive - all systems operational")
+        except Exception as e:
+            logger.error(f"Periodic log error: {e}")
+            await asyncio.sleep(60)  # При ошибке ждем минуту
 
 
 @asynccontextmanager
@@ -34,6 +46,9 @@ async def lifespan(app: FastAPI):
         await db.connect()
         logger.info("Database connected")
         
+        # Проверяем OpenAI API
+        await gpt_service.health_check()
+        
         # Запускаем планировщик
         await scheduler_service.start()
         logger.info("Scheduler started")
@@ -41,6 +56,9 @@ async def lifespan(app: FastAPI):
         # Планируем задачи для всех пользователей
         await scheduler_service.reschedule_all_users()
         logger.info("User tasks scheduled")
+        
+        # Запускаем периодический лог "alive"
+        asyncio.create_task(periodic_alive_log())
         
         logger.info("Application started successfully")
         yield
@@ -159,7 +177,27 @@ async def tribute_webhook(request: Request):
 @app.get("/health")
 async def health_check():
     """Проверка здоровья приложения."""
-    return {"status": "ok", "timestamp": str(asyncio.get_event_loop().time())}
+    try:
+        # Проверяем доступность базы данных
+        db_status = "ok" if db._connection else "error"
+        
+        # Проверяем доступность GPT
+        gpt_status = "ok" if gpt_service.gpt_available else "offline"
+        
+        return {
+            "status": "ok",
+            "timestamp": str(asyncio.get_event_loop().time()),
+            "database": db_status,
+            "gpt": gpt_status,
+            "version": "1.0.0"
+        }
+    except Exception as e:
+        logger.error(f"Health check error: {e}")
+        return {
+            "status": "error",
+            "error": str(e),
+            "timestamp": str(asyncio.get_event_loop().time())
+        }
 
 
 @app.get("/")

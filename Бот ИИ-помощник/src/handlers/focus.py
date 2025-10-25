@@ -7,7 +7,7 @@ from datetime import datetime, timedelta
 
 from ..states import Focus
 from ..texts import texts
-from ..keyboards import kb_focus_duration, kb_focus_controls, kb_focus_reflection, kb_post_flow, get_main_menu
+from ..keyboards import get_focus_duration_keyboard, kb_focus_controls, kb_focus_reflection, kb_post_flow, get_main_menu
 from .. import storage
 from ..services import ux, flow
 from ..logger import get_logger
@@ -108,14 +108,17 @@ async def focus_start(msg_or_callback, state: FSMContext):
     await state.set_state(Focus.selecting)
     
     try:
-        # Создаем клавиатуру напрямую
-        keyboard = InlineKeyboardMarkup(
-            inline_keyboard=[
-                [InlineKeyboardButton(text="🍅 25 минут", callback_data="focus:start:25")],
-                [InlineKeyboardButton(text="🔥 45 минут", callback_data="focus:start:45")],
-                [InlineKeyboardButton(text="❌ Отмена", callback_data="focus:cancel")]
-            ]
-        )
+        # Проверяем подписку пользователя
+        user_id = msg_or_callback.from_user.id
+        user = await storage.db.get_user(user_id)
+        
+        # Определяем, есть ли Pro доступ
+        is_trial_active = user.trial_until and user.trial_until > datetime.now()
+        is_pro_active = user.plan_tier == "pro" and user.subscription_until and user.subscription_until > datetime.now()
+        is_pro = is_trial_active or is_pro_active
+        
+        # Создаем клавиатуру с учетом подписки
+        keyboard = get_focus_duration_keyboard(is_pro)
         
         if isinstance(msg_or_callback, Message):
             await msg_or_callback.answer(

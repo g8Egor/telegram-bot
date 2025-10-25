@@ -16,6 +16,7 @@ class Config(BaseModel):
     
     # OpenAI
     openai_api_key: str = Field(..., description="Ключ OpenAI API")
+    openai_model: str = Field(default="gpt-4o-mini", description="Модель OpenAI")
     
     # Timezone and Schedule
     default_tz: str = Field(default="Europe/Amsterdam", description="Часовой пояс по умолчанию")
@@ -24,12 +25,12 @@ class Config(BaseModel):
     weekly_weekday: int = Field(default=6, ge=0, le=6, description="День недели для отчета (0=пн, 6=вс)")
     
     # Tribute Payments
-    tribute_product_base_url: Optional[str] = Field(None, description="Базовая ссылка на продукт Tribute")
+    tribute_product_url: str = Field(default="https://t.me/tribute/app?startapp=plVY", description="Ссылка на продукт Tribute")
     tribute_webhook_secret: Optional[str] = Field(None, description="Секрет для подписи webhook Tribute")
     external_base_url: Optional[str] = Field(None, description="Публичный URL для webhook")
     
     # API Settings
-    openai_timeout: int = Field(default=30, description="Таймаут OpenAI API в секундах")
+    openai_timeout: int = Field(default=15, description="Таймаут OpenAI API в секундах")
     openai_retries: int = Field(default=3, description="Количество повторов для OpenAI API")
     http_timeout: int = Field(default=10, description="Таймаут HTTP запросов в секундах")
     
@@ -64,11 +65,12 @@ def load_config() -> Config:
         bot_token=os.getenv("BOT_TOKEN", ""),
         admin_id=int(os.getenv("ADMIN_ID", "0")),
         openai_api_key=os.getenv("OPENAI_API_KEY", ""),
+        openai_model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
         default_tz=os.getenv("DEFAULT_TZ", "Europe/Amsterdam"),
         morning_hour=int(os.getenv("MORNING_HOUR", "8")),
         evening_hour=int(os.getenv("EVENING_HOUR", "20")),
         weekly_weekday=int(os.getenv("WEEKLY_WEEKDAY", "6")),
-        tribute_product_base_url=os.getenv("TRIBUTE_PRODUCT_BASE_URL"),
+        tribute_product_url=os.getenv("TRIBUTE_PRODUCT_URL", "https://t.me/tribute/app?startapp=plVY"),
         tribute_webhook_secret=os.getenv("TRIBUTE_WEBHOOK_SECRET"),
         external_base_url=os.getenv("EXTERNAL_BASE_URL"),
     )

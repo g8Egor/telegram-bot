@@ -43,15 +43,18 @@ def get_cancel_keyboard() -> ReplyKeyboardMarkup:
     return keyboard
 
 
-def get_focus_duration_keyboard() -> InlineKeyboardMarkup:
+def get_focus_duration_keyboard(is_pro: bool = False) -> InlineKeyboardMarkup:
     """Клавиатура выбора продолжительности фокус-сессии."""
-    keyboard = InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text=texts.BUTTON_25_MIN, callback_data="focus:start:25")],
-            [InlineKeyboardButton(text=texts.BUTTON_45_MIN, callback_data="focus:start:45")],
-            [InlineKeyboardButton(text=texts.BUTTON_CANCEL, callback_data="focus:cancel")]
-        ]
-    )
+    buttons = [
+        [InlineKeyboardButton(text=texts.BUTTON_25_MIN, callback_data="focus:start:25")]
+    ]
+    
+    if is_pro:
+        buttons.append([InlineKeyboardButton(text=texts.BUTTON_45_MIN, callback_data="focus:start:45")])
+    
+    buttons.append([InlineKeyboardButton(text=texts.BUTTON_CANCEL, callback_data="focus:cancel")])
+    
+    keyboard = InlineKeyboardMarkup(inline_keyboard=buttons)
     return keyboard
 
 

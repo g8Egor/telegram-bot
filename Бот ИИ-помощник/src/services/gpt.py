@@ -1,7 +1,10 @@
 """Сервис для работы с OpenAI GPT."""
 import asyncio
+import json
+import re
+import uuid
+import hashlib
 from typing import Dict, List, Any, Optional
-import openai
 from openai import AsyncOpenAI
 import httpx
 
@@ -18,47 +21,93 @@ class GPTService:
         self.client = AsyncOpenAI(api_key=config.openai_api_key)
         self.timeout = config.openai_timeout
         self.retries = config.openai_retries
+        self.model = config.openai_model
+        self.gpt_available = True
+        self.last_response_hash = None
+        
+    async def health_check(self) -> bool:
+        """Проверяет доступность OpenAI API."""
+        try:
+            start_time = asyncio.get_event_loop().time()
+            response = await self.client.chat.completions.create(
+                model=self.model,
+                messages=[{"role": "user", "content": "Hi"}],
+                max_tokens=10,
+                timeout=5
+            )
+            latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+            logger.info(f"OpenAI OK: {self.model}, {latency}ms")
+            self.gpt_available = True
+            return True
+        except Exception as e:
+            logger.error(f"OpenAI health check failed: {e}")
+            self.gpt_available = False
+            return False
     
-    async def _make_request(self, messages: List[Dict[str, str]], model: str = "gpt-3.5-turbo") -> str:
+    async def _make_request(self, messages: List[Dict[str, str]], 
+                          temperature: float = 0.7, 
+                          max_tokens: int = 500) -> str:
         """Выполняет запрос к OpenAI с retry логикой."""
+        if not self.gpt_available:
+            return "ИИ временно недоступен. Попробуйте позже."
+            
+        request_id = str(uuid.uuid4())[:8]
+        logger.info(f"GPT request {request_id}: {len(messages)} messages")
+        
         for attempt in range(self.retries):
             try:
+                start_time = asyncio.get_event_loop().time()
                 response = await self.client.chat.completions.create(
-                    model=model,
+                    model=self.model,
                     messages=messages,
-                    max_tokens=500,
-                    temperature=0.7,
+                    max_tokens=max_tokens,
+                    temperature=temperature,
+                    top_p=0.9,
                     timeout=self.timeout
                 )
-                return response.choices[0].message.content.strip()
+                
+                latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                content = response.choices[0].message.content.strip()
+                
+                # Дедупликация ответов
+                response_hash = hashlib.md5(content[-100:].encode()).hexdigest()
+                if response_hash == self.last_response_hash and attempt < self.retries - 1:
+                    logger.info(f"Duplicate response detected, retrying with jitter")
+                    temperature += 0.1
+                    await asyncio.sleep(1)
+                    continue
+                
+                self.last_response_hash = response_hash
+                logger.info(f"GPT response {request_id}: {latency}ms, {len(content)} chars")
+                return content
             
             except Exception as e:
-                logger.error(f"OpenAI request failed (attempt {attempt + 1}): {e}")
+                logger.error(f"OpenAI request {request_id} failed (attempt {attempt + 1}): {e}")
                 if attempt == self.retries - 1:
-                    # Если все попытки исчерпаны, возвращаем заглушку
-                    return "Извините, временно не могу обработать запрос. Попробуйте позже."
+                    self.gpt_available = False
+                    return "ИИ временно недоступен. Попробуйте позже."
                 await asyncio.sleep(2 ** attempt)  # Exponential backoff
     
     async def build_profile(self, answers_10q: List[str]) -> Dict[str, Any]:
         """Строит психологический профиль на основе 10 вопросов."""
-        prompt = f"""Ты - опытный психолог. Проанализируй ответы пользователя и создай психологический профиль.
+        if not self.gpt_available:
+            return self._get_fallback_profile(answers_10q)
+            
+        # Структурируем ответы пользователя
+        user_context = self._analyze_user_answers(answers_10q)
+        
+        prompt = f"""Ты - опытный психолог. Проанализируй ответы пользователя и создай персональный профиль.
 
-Ответы пользователя:
-1. {answers_10q[0] if len(answers_10q) > 0 else 'Не отвечен'}
-2. {answers_10q[1] if len(answers_10q) > 1 else 'Не отвечен'}
-3. {answers_10q[2] if len(answers_10q) > 2 else 'Не отвечен'}
-4. {answers_10q[3] if len(answers_10q) > 3 else 'Не отвечен'}
-5. {answers_10q[4] if len(answers_10q) > 4 else 'Не отвечен'}
-6. {answers_10q[5] if len(answers_10q) > 5 else 'Не отвечен'}
-7. {answers_10q[6] if len(answers_10q) > 6 else 'Не отвечен'}
-8. {answers_10q[7] if len(answers_10q) > 7 else 'Не отвечен'}
-9. {answers_10q[8] if len(answers_10q) > 8 else 'Не отвечен'}
-10. {answers_10q[9] if len(answers_10q) > 9 else 'Не отвечен'}
+Контекст пользователя:
+{user_context}
 
-Верни ТОЛЬКО JSON без дополнительного текста:
+Ответы на 10 вопросов:
+{self._format_answers(answers_10q)}
+
+Создай уникальный профиль на основе этих конкретных ответов. Верни ТОЛЬКО JSON:
 {{
-  "personality_type": "тип личности",
-  "detailed_analysis": "детальный анализ",
+  "personality_type": "конкретный тип личности",
+  "detailed_analysis": "детальный анализ на основе ответов",
   "strengths": ["сила1", "сила2", "сила3"],
   "growth_areas": ["область1", "область2"],
   "communication_style": "стиль общения",
@@ -67,155 +116,178 @@ class GPTService:
 }}"""
         
         messages = [{"role": "user", "content": prompt}]
-        response = await self._make_request(messages)
+        response = await self._make_request(messages, temperature=0.8)
         
         try:
-            import json
-            import re
+            return self._parse_json_response(response)
+        except Exception as e:
+            logger.error(f"Profile parsing failed: {e}")
+            return self._get_fallback_profile(answers_10q)
+    
+    def _analyze_user_answers(self, answers: List[str]) -> str:
+        """Анализирует ответы пользователя для контекста."""
+        if not answers or all(not a.strip() for a in answers):
+            return "Недостаточно данных для анализа"
             
-            # Очищаем ответ от лишних символов
-            cleaned_response = response.strip()
+        # Простой анализ паттернов
+        patterns = []
+        if any("утром" in a.lower() or "рано" in a.lower() for a in answers):
+            patterns.append("утренний тип")
+        if any("вечером" in a.lower() or "поздно" in a.lower() for a in answers):
+            patterns.append("вечерний тип")
+        if any("спорт" in a.lower() or "тренировка" in a.lower() for a in answers):
+            patterns.append("активный образ жизни")
+        if any("книга" in a.lower() or "чтение" in a.lower() for a in answers):
+            patterns.append("интеллектуальные интересы")
+            
+        return f"Паттерны: {', '.join(patterns) if patterns else 'уникальный подход'}"
+    
+    def _format_answers(self, answers: List[str]) -> str:
+        """Форматирует ответы для промпта."""
+        formatted = []
+        for i, answer in enumerate(answers[:10], 1):
+            if answer and answer.strip():
+                formatted.append(f"{i}. {answer.strip()}")
+            else:
+                formatted.append(f"{i}. Не отвечен")
+        return "\n".join(formatted)
+    
+    def _parse_json_response(self, response: str) -> Dict[str, Any]:
+        """Парсит JSON ответ от GPT."""
+        try:
+            # Очищаем ответ
+            cleaned = response.strip()
             
             # Ищем JSON в тексте
-            json_match = re.search(r'\{.*\}', cleaned_response, re.DOTALL)
+            json_match = re.search(r'\{.*\}', cleaned, re.DOTALL)
             if json_match:
                 json_str = json_match.group(0)
                 return json.loads(json_str)
             else:
-                # Если JSON не найден, пытаемся парсить весь ответ
-                return json.loads(cleaned_response)
-                
+                return json.loads(cleaned)
         except (json.JSONDecodeError, AttributeError) as e:
-            logger.error(f"Failed to parse profile JSON: {e}")
-            logger.error(f"Response was: {response[:200]}...")
-            
-            # Возвращаем профиль на основе ответов пользователя
-            return {
-                "personality_type": "Адаптивная личность",
-                "detailed_analysis": f"На основе ваших ответов: {', '.join(answers_10q[:3])} - вы демонстрируете уникальный подход к жизни. Ваши ответы показывают индивидуальность и способность к рефлексии.",
-                "strengths": ["Самоанализ", "Целеустремленность", "Адаптивность", "Рефлексия"],
-                "growth_areas": ["Эмоциональная гибкость", "Коммуникация", "Самопринятие"],
-                "communication_style": "Искренний и открытый",
-                "motivation_factors": ["Личностный рост", "Самореализация", "Развитие"],
-                "personal_advice": "Продолжайте развивать самосознание и используйте свои сильные стороны для достижения целей. Не забывайте о важности баланса между амбициями и внутренним покоем."
-            }
-        except Exception as e:
-            logger.error(f"Profile building failed: {e}")
-            return {
-                "personality_type": "Адаптивный",
-                "detailed_analysis": "Вы обладаете высокой адаптивностью и способностью быстро приспосабливаться к изменениям. Ваши ответы показывают открытость новому опыту и готовность к развитию. Это ценные качества для современного мира.",
-                "strengths": ["Гибкость", "Устойчивость", "Открытость", "Адаптивность"],
-                "growth_areas": ["Технические навыки", "Коммуникация", "Фокус"],
-                "communication_style": "Дружелюбный и открытый",
-                "motivation_factors": ["Достижение целей", "Личностный рост", "Новые возможности"],
-                "personal_advice": "Ваша адаптивность - это сила. Развивайте технические навыки и учитесь фокусироваться на долгосрочных целях, не теряя при этом гибкости в подходе."
-            }
+            logger.error(f"JSON parsing failed: {e}")
+            raise
     
-    async def plan_morning(self, goal: str, top3: List[str], energy: int, 
-                          persona: str, memories: List[Dict[str, Any]]) -> str:
-        """Планирует утро на основе целей и энергии."""
-        memories_context = "\n".join([f"- {m['content']}" for m in memories[:3]])
+    def _get_fallback_profile(self, answers: List[str]) -> Dict[str, Any]:
+        """Возвращает fallback профиль на основе ответов."""
+        if not answers or all(not a.strip() for a in answers):
+            return {
+                "personality_type": "Исследователь",
+                "detailed_analysis": "Пока недостаточно данных для глубокого анализа. Продолжайте использовать бота, и профиль станет более точным.",
+                "strengths": ["Открытость к новому", "Готовность к развитию"],
+                "growth_areas": ["Самопознание", "Рефлексия"],
+                "communication_style": "Искренний",
+                "motivation_factors": ["Личностный рост"],
+                "personal_advice": "Продолжайте исследовать себя через ежедневные практики в боте."
+            }
         
-        prompt = f"""
-        Ты - {persona}. Помоги пользователю спланировать день.
+        # Анализируем ответы для персонализации
+        unique_answers = [a for a in answers if a and a.strip()]
+        context = f"На основе ваших ответов: {', '.join(unique_answers[:3])}"
         
-        Цель дня: {goal}
-        Топ-3 приоритета: {', '.join(top3)}
-        Уровень энергии (1-10): {energy}
-        
-        Контекст из памяти:
-        {memories_context}
-        
-        Дай краткий план дня (3-4 пункта) с учетом энергии и приоритетов.
-        Будь практичным и мотивирующим.
-        """
-        
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            return await self._make_request(messages)
-        except Exception as e:
-            logger.error(f"GPT request failed: {e}")
-            return "Извините, временно не могу обработать запрос. Попробуйте позже."
-    
-    async def reflect_evening(self, done: List[str], not_done: List[str], 
-                             learning: str, persona: str, memories: List[Dict[str, Any]]) -> str:
-        """Рефлексия вечером."""
-        memories_context = "\n".join([f"- {m['content']}" for m in memories[:3]])
-        
-        prompt = f"""
-        Ты - {persona}. Проведи вечернюю рефлексию.
-        
-        Выполнено: {', '.join(done)}
-        Не выполнено: {', '.join(not_done)}
-        Что узнал: {learning}
-        
-        Контекст:
-        {memories_context}
-        
-        Дай краткую рефлексию (3-4 предложения) с выводами и советами на завтра.
-        """
-        
-        messages = [{"role": "user", "content": prompt}]
-        try:
-            return await self._make_request(messages)
-        except Exception as e:
-            logger.error(f"GPT request failed: {e}")
-            return "Извините, временно не могу обработать запрос. Попробуйте позже."
+        return {
+            "personality_type": "Уникальная личность",
+            "detailed_analysis": f"{context} - вы демонстрируете индивидуальный подход к жизни и готовность к саморазвитию.",
+            "strengths": ["Самоанализ", "Целеустремленность", "Рефлексия"],
+            "growth_areas": ["Эмоциональная гибкость", "Коммуникация"],
+            "communication_style": "Искренний и открытый",
+            "motivation_factors": ["Личностный рост", "Самореализация"],
+            "personal_advice": "Используйте свои сильные стороны для достижения целей. Развивайте эмоциональный интеллект и коммуникативные навыки."
+        }
     
     async def reflect_dialog(self, user_prompt: str, profile: Dict[str, Any], 
                            persona: str, memories: List[Dict[str, Any]], 
                            mood_snapshot: Dict[str, int]) -> str:
         """Диалог с цифровым Я."""
+        if not self.gpt_available:
+            return "ИИ временно недоступен. Попробуйте позже."
+            
         memories_context = "\n".join([f"- {m['content']}" for m in memories[:5]])
         
-        prompt = f"""
-        Ты - {persona}, персональный ассистент пользователя.
-        
-        Профиль пользователя:
-        - Тип: {profile.get('personality_type', 'Не определен')}
-        - Сильные стороны: {', '.join(profile.get('strengths', []))}
-        - Области роста: {', '.join(profile.get('growth_areas', []))}
-        
-        Текущее состояние:
-        - Энергия: {mood_snapshot.get('energy', 5)}/10
-        - Настроение: {mood_snapshot.get('mood', 5)}/10
-        
-        Контекст из памяти:
-        {memories_context}
-        
-        Вопрос пользователя: {user_prompt}
-        
-        Ответь как персональный ассистент, учитывая профиль и контекст.
-        Будь поддерживающим и практичным.
-        """
+        prompt = f"""Ты - {persona}, персональный ассистент.
+
+Профиль пользователя:
+- Тип: {profile.get('personality_type', 'Не определен')}
+- Сильные стороны: {', '.join(profile.get('strengths', []))}
+- Области роста: {', '.join(profile.get('growth_areas', []))}
+
+Текущее состояние:
+- Энергия: {mood_snapshot.get('energy', 5)}/10
+- Настроение: {mood_snapshot.get('mood', 5)}/10
+
+Контекст из памяти:
+{memories_context}
+
+Вопрос: {user_prompt}
+
+Ответь как персональный ассистент в стиле {persona}. 
+Дай 1 конкретный следующий шаг. Будь поддерживающим и практичным.
+Максимум 2-6 строк."""
         
         messages = [{"role": "user", "content": prompt}]
-        try:
-            return await self._make_request(messages)
-        except Exception as e:
-            logger.error(f"GPT request failed: {e}")
-            return "Извините, временно не могу обработать запрос. Попробуйте позже."
+        return await self._make_request(messages, temperature=0.7, max_tokens=200)
+    
+    async def plan_morning(self, goal: str, top3: List[str], energy: int, 
+                          persona: str, memories: List[Dict[str, Any]]) -> str:
+        """Планирует утро на основе целей и энергии."""
+        if not self.gpt_available:
+            return "ИИ временно недоступен. Попробуйте позже."
+            
+        memories_context = "\n".join([f"- {m['content']}" for m in memories[:3]])
+        
+        prompt = f"""Ты - {persona}. Помоги спланировать день.
+
+Цель дня: {goal}
+Топ-3 приоритета: {', '.join(top3)}
+Уровень энергии (1-10): {energy}
+
+Контекст: {memories_context}
+
+Дай краткий план дня (3-4 пункта) с учетом энергии и приоритетов.
+Будь практичным и мотивирующим."""
+        
+        messages = [{"role": "user", "content": prompt}]
+        return await self._make_request(messages, temperature=0.7)
+    
+    async def reflect_evening(self, done: List[str], not_done: List[str], 
+                             learning: str, persona: str, memories: List[Dict[str, Any]]) -> str:
+        """Рефлексия вечером."""
+        if not self.gpt_available:
+            return "ИИ временно недоступен. Попробуйте позже."
+            
+        memories_context = "\n".join([f"- {m['content']}" for m in memories[:3]])
+        
+        prompt = f"""Ты - {persona}. Проведи вечернюю рефлексию.
+
+Выполнено: {', '.join(done)}
+Не выполнено: {', '.join(not_done)}
+Что узнал: {learning}
+
+Контекст: {memories_context}
+
+Дай краткую рефлексию (3-4 предложения) с выводами и советами на завтра."""
+        
+        messages = [{"role": "user", "content": prompt}]
+        return await self._make_request(messages, temperature=0.7)
     
     async def weekly_report(self, metrics: Dict[str, Any], persona: str) -> str:
         """Генерирует еженедельный отчет."""
-        prompt = f"""
-        Ты - {persona}. Создай еженедельный отчет.
-        
-        Метрики:
-        - Записей: {metrics.get('entries_count', 0)}
-        - Средняя энергия: {metrics.get('avg_energy', 0)}/10
-        - Фокус-сессии: {metrics.get('focus_minutes', 0)} минут
-        - Активность по дням: {metrics.get('daily_activity', {})}
-        
-        Создай краткий отчет (5-6 предложений) с выводами и рекомендациями.
-        """
+        if not self.gpt_available:
+            return "ИИ временно недоступен. Попробуйте позже."
+            
+        prompt = f"""Ты - {persona}. Создай еженедельный отчет.
+
+Метрики:
+- Записей: {metrics.get('entries_count', 0)}
+- Средняя энергия: {metrics.get('avg_energy', 0)}/10
+- Фокус-сессии: {metrics.get('focus_minutes', 0)} минут
+- Активность: {metrics.get('daily_activity', {})}
+
+Создай краткий отчет (5-6 предложений) с выводами и рекомендациями."""
         
         messages = [{"role": "user", "content": prompt}]
-        try:
-            return await self._make_request(messages)
-        except Exception as e:
-            logger.error(f"GPT request failed: {e}")
-            return "Извините, временно не могу обработать запрос. Попробуйте позже."
+        return await self._make_request(messages, temperature=0.7)
 
 
 # Глобальный экземпляр сервиса
