@@ -28,14 +28,15 @@ class GPTService:
     async def health_check(self) -> bool:
         """Проверяет доступность OpenAI API."""
         try:
-            start_time = asyncio.get_event_loop().time()
+            import time
+            start_time = time.time()
             response = await self.client.chat.completions.create(
                 model=self.model,
                 messages=[{"role": "user", "content": "Hi"}],
                 max_tokens=10,
                 timeout=5
             )
-            latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+            latency = int((time.time() - start_time) * 1000)
             logger.info(f"OpenAI OK: {self.model}, {latency}ms")
             self.gpt_available = True
             return True
@@ -56,7 +57,8 @@ class GPTService:
         
         for attempt in range(self.retries):
             try:
-                start_time = asyncio.get_event_loop().time()
+                import time
+                start_time = time.time()
                 response = await self.client.chat.completions.create(
                     model=self.model,
                     messages=messages,
@@ -66,7 +68,7 @@ class GPTService:
                     timeout=self.timeout
                 )
                 
-                latency = int((asyncio.get_event_loop().time() - start_time) * 1000)
+                latency = int((time.time() - start_time) * 1000)
                 content = response.choices[0].message.content.strip()
                 
                 # Дедупликация ответов

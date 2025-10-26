@@ -178,6 +178,8 @@ async def tribute_webhook(request: Request):
 async def health_check():
     """Проверка здоровья приложения."""
     try:
+        import time
+        
         # Проверяем доступность базы данных
         db_status = "ok" if db._connection else "error"
         
@@ -186,7 +188,7 @@ async def health_check():
         
         return {
             "status": "ok",
-            "timestamp": str(asyncio.get_event_loop().time()),
+            "timestamp": time.time(),
             "database": db_status,
             "gpt": gpt_status,
             "version": "1.0.0"
@@ -196,7 +198,7 @@ async def health_check():
         return {
             "status": "error",
             "error": str(e),
-            "timestamp": str(asyncio.get_event_loop().time())
+            "timestamp": time.time()
         }
 
 
