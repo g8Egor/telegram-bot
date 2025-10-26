@@ -15,14 +15,14 @@ class TributeService:
     """Сервис для работы с платежами Tribute."""
     
     def __init__(self):
-        self.base_url = config.tribute_product_base_url
+        self.base_url = config.tribute_product_url
         self.webhook_secret = config.tribute_webhook_secret
         self.external_base_url = config.external_base_url
     
     async def build_buy_link(self, tg_id: int, plan_tier: str, period: str) -> str:
         """Строит ссылку на оплату в Tribute."""
         if not self.base_url:
-            raise ValueError("TRIBUTE_PRODUCT_BASE_URL not configured")
+            raise ValueError("TRIBUTE_PRODUCT_URL not configured")
         
         # Создаем external_id для отслеживания
         external_id = f"{tg_id}_{plan_tier}_{period}"
